@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -7,93 +7,57 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, Filter, Download, Activity as ActivityIcon } from 'lucide-react';
 
-// Sample data - in real app this would come from API/database
-const activities = [
-  {
-    id: 'SSL001',
-    type: 'New',
-    dns: 'api.example.com',
-    appName: 'API Gateway',
-    owner: 'John Doe',
-    spoc: 'john.doe@company.com',
-    ca: 'Godaddy',
-    createdAt: '2024-01-15T10:30:00Z',
-    status: 'Completed'
-  },
-  {
-    id: 'SSL002',
-    type: 'Renew',
-    dns: 'www.company.com',
-    appName: 'Main Website',
-    owner: 'Jane Smith',
-    spoc: 'jane.smith@company.com',
-    ca: 'DigiCert',
-    createdAt: '2024-01-14T14:20:00Z',
-    status: 'Completed'
-  },
-  {
-    id: 'SSL003',
-    type: 'PFX',
-    dns: 'secure.portal.net',
-    appName: 'Customer Portal',
-    owner: 'Mike Johnson',
-    spoc: 'mike.johnson@company.com',
-    ca: 'Godaddy',
-    createdAt: '2024-01-13T09:15:00Z',
-    status: 'Processing'
-  },
-  {
-    id: 'SSL004',
-    type: 'Upload',
-    dns: 'internal.tools.org',
-    appName: 'Internal Tools',
-    owner: 'Sarah Wilson',
-    spoc: 'sarah.wilson@company.com',
-    ca: 'Let\'s Encrypt',
-    createdAt: '2024-01-12T16:45:00Z',
-    status: 'Completed'
-  },
-  {
-    id: 'SSL005',
-    type: 'New',
-    dns: 'dev.testapp.io',
-    appName: 'Development Environment',
-    owner: 'Alex Brown',
-    spoc: 'alex.brown@company.com',
-    ca: 'Godaddy',
-    createdAt: '2024-01-11T11:30:00Z',
-    status: 'Pending'
-  },
-  {
-    id: 'SSL006',
-    type: 'Renew',
-    dns: 'blog.company.com',
-    appName: 'Company Blog',
-    owner: 'Emily Davis',
-    spoc: 'emily.davis@company.com',
-    ca: 'DigiCert',
-    createdAt: '2024-01-10T13:20:00Z',
-    status: 'Failed'
-  },
-];
+type ActivityRow = {
+  id: string;
+  type: string;
+  dns: string;
+  appName: string;
+  owner: string;
+  spoc?: string;
+  ca: string;
+  createdAt: string;
+  status: string;
+  csr_md5?: string;
+  key_md5?: string;
+  remarks?: string;
+};
 
 const Activity: React.FC = () => {
+  const [activities, setActivities] = useState<ActivityRow[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('date');
 
+  useEffect(() => {
+    const fetchActivities = async () => {
+      try {
+        const res = await fetch('http://10.45.24.183:5000/api/certificates/activity');
+        if (!res.ok) throw new Error('Failed to fetch activity');
+        const data = await res.json();
+        setActivities(data);
+      } catch (err) {
+        console.error('Error loading activity:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchActivities();
+  }, []);
+
   const filteredAndSortedData = useMemo(() => {
     let filtered = activities.filter(activity => {
-      const matchesSearch = 
-        activity.dns.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        activity.appName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        activity.owner.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        activity.id.toLowerCase().includes(searchTerm.toLowerCase());
-      
+      const matchesSearch =
+        activity.dns?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        activity.appName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        activity.owner?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        activity.id?.toLowerCase().includes(searchTerm.toLowerCase());
+
       const matchesType = typeFilter === 'all' || activity.type === typeFilter;
       const matchesStatus = statusFilter === 'all' || activity.status === statusFilter;
-      
+
       return matchesSearch && matchesType && matchesStatus;
     });
 
@@ -114,16 +78,20 @@ const Activity: React.FC = () => {
     });
 
     return filtered;
-  }, [searchTerm, typeFilter, statusFilter, sortBy]);
+  }, [activities, searchTerm, typeFilter, statusFilter, sortBy]);
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return dateString;
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -148,7 +116,7 @@ const Activity: React.FC = () => {
       'PFX': 'outline',
       'Upload': 'outline'
     } as const;
-    
+
     return <Badge variant={variants[type as keyof typeof variants] || 'secondary'}>{type}</Badge>;
   };
 
@@ -162,7 +130,7 @@ const Activity: React.FC = () => {
         row.dns,
         row.appName,
         row.owner,
-        row.spoc,
+        row.spoc || '',
         row.ca,
         formatDate(row.createdAt),
         row.status
@@ -177,6 +145,12 @@ const Activity: React.FC = () => {
     a.click();
     window.URL.revokeObjectURL(url);
   };
+
+  if (loading) {
+    return (
+      <div className="py-8 text-center">Loading activity...</div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -283,12 +257,13 @@ const Activity: React.FC = () => {
                   <TableHead>CA</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredAndSortedData.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       No activities found matching your criteria
                     </TableCell>
                   </TableRow>
@@ -305,6 +280,21 @@ const Activity: React.FC = () => {
                         {formatDate(activity.createdAt)}
                       </TableCell>
                       <TableCell>{getStatusBadge(activity.status)}</TableCell>
+
+                      {/* ACTIONS: Download CSR */}
+                      <TableCell>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            window.open(
+                              `http://10.45.24.183:5000/api/certificates/download/${activity.dns}.csr`
+                            )
+                          }
+                        >
+                          <Download className="h-4 w-4 mr-1" /> CSR
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
@@ -318,3 +308,4 @@ const Activity: React.FC = () => {
 };
 
 export default Activity;
+

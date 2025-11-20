@@ -1,60 +1,57 @@
-import mongoose from "mongoose";
-import { GridFSBucket } from "mongodb";
+// gridfs.js
+import { MongoClient, GridFSBucket } from "mongodb";
 
+let mongoClient;
 let bucket;
-let connection;
 
 export async function initMongo() {
-  try {
-    connection = await mongoose.createConnection(
-      "mongodb://ril_ssl_files_rw:RilSSLabrw2k%2325@10.45.28.81:27017/ril_ssl_files?directConnection=true"
-    );
+  const uri = "mongodb://ril_ssl_files_rw:RilSSLabrw2k%2325@10.45.28.81:27017/ril_ssl_files?directConnection=true";
 
-    connection.once("open", () => {
-      bucket = new GridFSBucket(connection.db, {
-        bucketName: "certfiles"
-      });
-      console.log("✅ MongoDB connected");
-      console.log("✅ GridFSBucket initialized");
-    });
+  mongoClient = new MongoClient(uri);
 
-  } catch (err) {
-    console.error("❌ MongoDB Connection Error:", err);
-  }
+  await mongoClient.connect();
+  console.log("✅ MongoDB connected");
+
+  const db = mongoClient.db("ril_ssl_files");
+
+  bucket = new GridFSBucket(db, {
+    bucketName: "certfiles",
+  });
+
+  console.log("✅ GridFSBucket initialized");
 }
 
-export function uploadToGridFS(filename, buffer) {
-  return new Promise((resolve, reject) => {
-    if (!bucket) return reject("❌ GridFSBucket not initialized");
+/**
+ * Upload file buffer to GridFS
+ */
+export async function uploadToGridFS(filename, buffer) {
+  if (!bucket) {
+    throw new Error("GridFS bucket not initialized");
+  }
 
+  return new Promise((resolve, reject) => {
     const uploadStream = bucket.openUploadStream(filename);
+
     uploadStream.end(buffer);
 
-    uploadStream.on("finish", (file) => resolve(file));
-    uploadStream.on("error", (err) => reject(err));
-  });
-}
+    uploadStream.on("finish", () => {
+      resolve({ _id: uploadStream.id, filename });
+    });
 
-export function downloadFromGridFS(filename) {
-  return new Promise((resolve, reject) => {
-    if (!bucket) return reject("GridFSBucket not initialized");
-
-    const downloadStream = bucket.openDownloadStreamByName(filename);
-    resolve(downloadStream);
-  });
-}
-
-export function downloadById(id) {
-  return new Promise((resolve, reject) => {
-    if (!bucket) return reject("GridFSBucket not initialized");
-
-    try {
-      const downloadStream = bucket.openDownloadStream(new ObjectId(id));
-      resolve(downloadStream);
-    } catch (err) {
+    uploadStream.on("error", (err) => {
       reject(err);
-    }
+    });
   });
 }
 
+/**
+ * Download file from GridFS
+ */
+export async function downloadFromGridFS(filename) {
+  if (!bucket) {
+    throw new Error("GridFS bucket not initialized");
+  }
+
+  return bucket.openDownloadStreamByName(filename);
+}
 
