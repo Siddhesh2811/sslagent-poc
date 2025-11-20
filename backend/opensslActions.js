@@ -10,20 +10,34 @@ export function runOpenSSL(command) {
   });
 }
 
-export async function generateCSRAndKey(fqdn, cnfPath) {
+export async function generateCSRAndKey(fqdn, cnfPath, sanList = []) {
   const csrFile = `${fqdn}.csr`;
   const keyFile = `${fqdn}.key`;
 
-  // FIXED OPENSSL COMMAND FOR LINUX
+  // Use v3_req when SAN entries are present
+  const extFlag = sanList.length > 0 ? `-extensions v3_req` : "";
+
+  // Generate CSR and KEY
   await runOpenSSL(
-    `openssl req -config "${cnfPath}" -newkey rsa:2048 -keyout "${keyFile}" -sha256 -nodes -new -out "${csrFile}"`
+    `openssl req -config "${cnfPath}" -newkey rsa:2048 -keyout "${keyFile}" -sha256 -nodes -new -out "${csrFile}" ${extFlag}`
   );
 
-  // Read CSR + Key
-  const csrContent = fs.readFileSync(csrFile);
-  const keyContent = fs.readFileSync(keyFile);
+  // Read files (prevent crash if empty)
+  const csrContent = fs.existsSync(csrFile)
+    ? fs.readFileSync(csrFile)
+    : Buffer.from("");
 
-  return { csrContent, keyContent };
+  const keyContent = fs.existsSync(keyFile)
+    ? fs.readFileSync(keyFile)
+    : Buffer.from("");
+
+  // RETURN FILE PATHS — THIS WAS MISSING
+  return {
+    csrContent,
+    keyContent,
+    csrPath: csrFile,
+    keyPath: keyFile
+  };
 }
 
 export async function getCSRMD5(csrPath) {

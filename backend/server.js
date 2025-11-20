@@ -11,7 +11,7 @@ import {
   getCSRMD5,
   getKeyMD5
 } from "./opensslActions.js";
-import { initMongo, uploadToGridFS } from "./gridfs.js";
+import { initMongo, uploadToGridFS, downloadFromGridFS, downloadById } from "./gridfs.js";
 
 const app = express();
 const PORT = 5000;
@@ -57,10 +57,7 @@ app.post("/api/certificates", async (req, res) => {
     fs.writeFileSync(cnfPath, cnfContent);
 
     // 2️⃣ Generate CSR + Key using OpenSSL
-    const { csrContent, keyContent, csrPath, keyPath } = await generateCSRAndKey(
-      dns,
-      cnfPath
-    );
+    const { csrContent, keyContent, csrPath, keyPath } = await generateCSRAndKey(dns, cnfPath, san || []);
 
     // 3️⃣ Generate MD5 using OpenSSL modulus
     const csr_md5 = await getCSRMD5(csrPath);
@@ -129,6 +126,28 @@ app.post("/api/certificates", async (req, res) => {
   } catch (error) {
     console.error("❌ CSR Generation Error:", error);
     return res.status(500).json({ message: "Failed to generate CSR", error });
+  }
+});
+
+// ----------------------------
+// DOWNLOAD API
+// ----------------------------
+
+app.get("/api/certificates/download/:filename", async (req, res) => {
+  try {
+    const filename = req.params.filename;
+
+    const stream = await downloadFromGridFS(filename);
+
+    res.set({
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    });
+
+    stream.pipe(res);
+  } catch (err) {
+    console.error("Download error:", err);
+    res.status(404).json({ message: "File not found in GridFS" });
   }
 });
 

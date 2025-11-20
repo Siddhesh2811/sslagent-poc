@@ -35,3 +35,26 @@ export function uploadToGridFS(filename, buffer) {
   });
 }
 
+export function downloadFromGridFS(filename) {
+  return new Promise((resolve, reject) => {
+    if (!bucket) return reject("GridFSBucket not initialized");
+
+    const downloadStream = bucket.openDownloadStreamByName(filename);
+    resolve(downloadStream);
+  });
+}
+
+export function downloadById(id) {
+  return new Promise((resolve, reject) => {
+    if (!bucket) return reject("GridFSBucket not initialized");
+
+    try {
+      const downloadStream = bucket.openDownloadStream(new ObjectId(id));
+      resolve(downloadStream);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+
