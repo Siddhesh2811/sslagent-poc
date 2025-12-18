@@ -1,6 +1,9 @@
 import { exec } from "child_process";
 import fs from "fs";
 
+import util from "util";
+const execAsync = util.promisify(exec);
+
 export function runOpenSSL(command) {
   return new Promise((resolve, reject) => {
     exec(command, (err, stdout, stderr) => {
@@ -58,3 +61,15 @@ export async function getKeyMD5(keyPath) {
   return output.split("=").pop().trim();
 }
 
+export async function getCRTMD5(crtPath) {
+  const { stdout } = await execAsync(
+    `openssl x509 -noout -modulus -in "${crtPath}" | openssl md5`
+  );
+  return stdout.split("=").pop().trim();
+}
+
+export async function generatePFX(crtPath, keyPath, pfxPath, password) {
+  await execAsync(
+    `openssl pkcs12 -export -out "${pfxPath}" -inkey "${keyPath}" -in "${crtPath}" -password pass:${password}`
+  );
+}

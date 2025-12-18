@@ -1,11 +1,35 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Filter, Download, Activity as ActivityIcon } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Search,
+  Filter,
+  Download,
+  Activity as ActivityIcon,
+} from "lucide-react";
 
 type ActivityRow = {
   id: string;
@@ -26,20 +50,22 @@ const Activity: React.FC = () => {
   const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const [searchTerm, setSearchTerm] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [sortBy, setSortBy] = useState('date');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("date");
 
   useEffect(() => {
     const fetchActivities = async () => {
       try {
-        const res = await fetch('http://10.45.24.183:5000/api/certificates/activity');
-        if (!res.ok) throw new Error('Failed to fetch activity');
+        const res = await fetch(
+          "http://localhost:5000/api/certificates/activity"
+        );
+        if (!res.ok) throw new Error("Failed to fetch activity");
         const data = await res.json();
         setActivities(data);
       } catch (err) {
-        console.error('Error loading activity:', err);
+        console.error("Error loading activity:", err);
       } finally {
         setLoading(false);
       }
@@ -48,15 +74,16 @@ const Activity: React.FC = () => {
   }, []);
 
   const filteredAndSortedData = useMemo(() => {
-    let filtered = activities.filter(activity => {
+    let filtered = activities.filter((activity) => {
       const matchesSearch =
         activity.dns?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         activity.appName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         activity.owner?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         activity.id?.toLowerCase().includes(searchTerm.toLowerCase());
 
-      const matchesType = typeFilter === 'all' || activity.type === typeFilter;
-      const matchesStatus = statusFilter === 'all' || activity.status === statusFilter;
+      const matchesType = typeFilter === "all" || activity.type === typeFilter;
+      const matchesStatus =
+        statusFilter === "all" || activity.status === statusFilter;
 
       return matchesSearch && matchesType && matchesStatus;
     });
@@ -64,13 +91,15 @@ const Activity: React.FC = () => {
     // Sort the filtered data
     filtered.sort((a, b) => {
       switch (sortBy) {
-        case 'date':
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        case 'dns':
+        case "date":
+          return (
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+        case "dns":
           return a.dns.localeCompare(b.dns);
-        case 'owner':
+        case "owner":
           return a.owner.localeCompare(b.owner);
-        case 'type':
+        case "type":
           return a.type.localeCompare(b.type);
         default:
           return 0;
@@ -82,12 +111,12 @@ const Activity: React.FC = () => {
 
   const formatDate = (dateString: string) => {
     try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
+      return new Date(dateString).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
       });
     } catch {
       return dateString;
@@ -96,13 +125,21 @@ const Activity: React.FC = () => {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'Completed':
-        return <Badge className="bg-success text-success-foreground">Completed</Badge>;
-      case 'Processing':
-        return <Badge className="bg-warning text-warning-foreground">Processing</Badge>;
-      case 'Pending':
+      case "Completed":
+        return (
+          <Badge className="bg-success text-success-foreground">
+            Completed
+          </Badge>
+        );
+      case "Processing":
+        return (
+          <Badge className="bg-warning text-warning-foreground">
+            Processing
+          </Badge>
+        );
+      case "Pending":
         return <Badge variant="outline">Pending</Badge>;
-      case 'Failed':
+      case "Failed":
         return <Badge variant="destructive">Failed</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
@@ -111,45 +148,59 @@ const Activity: React.FC = () => {
 
   const getTypeBadge = (type: string) => {
     const variants = {
-      'New': 'default',
-      'Renew': 'secondary',
-      'PFX': 'outline',
-      'Upload': 'outline'
+      New: "default",
+      Renew: "secondary",
+      PFX: "outline",
+      Upload: "outline",
     } as const;
 
-    return <Badge variant={variants[type as keyof typeof variants] || 'secondary'}>{type}</Badge>;
+    return (
+      <Badge variant={variants[type as keyof typeof variants] || "secondary"}>
+        {type}
+      </Badge>
+    );
   };
 
   const exportToCSV = () => {
-    const headers = ['ID', 'Type', 'DNS', 'App Name', 'Owner', 'SPOC', 'CA', 'Created At', 'Status'];
+    const headers = [
+      "ID",
+      "Type",
+      "DNS",
+      "App Name",
+      "Owner",
+      "SPOC",
+      "CA",
+      "Created At",
+      "Status",
+    ];
     const csvContent = [
-      headers.join(','),
-      ...filteredAndSortedData.map(row => [
-        row.id,
-        row.type,
-        row.dns,
-        row.appName,
-        row.owner,
-        row.spoc || '',
-        row.ca,
-        formatDate(row.createdAt),
-        row.status
-      ].join(','))
-    ].join('\n');
+      headers.join(","),
+      ...filteredAndSortedData.map((row) =>
+        [
+          row.id,
+          row.type,
+          row.dns,
+          row.appName,
+          row.owner,
+          row.spoc || "",
+          row.ca,
+          formatDate(row.createdAt),
+          row.status,
+        ].join(",")
+      ),
+    ].join("\n");
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const blob = new Blob([csvContent], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = 'ssl_activities.csv';
+    a.download = "ssl_activities.csv";
     a.click();
     window.URL.revokeObjectURL(url);
   };
 
   if (loading) {
-    return (
-      <div className="py-8 text-center">Loading activity...</div>
-    );
+    return <div className="py-8 text-center">Loading activity...</div>;
   }
 
   return (
@@ -263,16 +314,23 @@ const Activity: React.FC = () => {
               <TableBody>
                 {filteredAndSortedData.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    <TableCell
+                      colSpan={9}
+                      className="text-center py-8 text-muted-foreground"
+                    >
                       No activities found matching your criteria
                     </TableCell>
                   </TableRow>
                 ) : (
                   filteredAndSortedData.map((activity) => (
                     <TableRow key={activity.id} className="hover:bg-muted/50">
-                      <TableCell className="font-mono text-sm">{activity.id}</TableCell>
+                      <TableCell className="font-mono text-sm">
+                        {activity.id}
+                      </TableCell>
                       <TableCell>{getTypeBadge(activity.type)}</TableCell>
-                      <TableCell className="font-medium">{activity.dns}</TableCell>
+                      <TableCell className="font-medium">
+                        {activity.dns}
+                      </TableCell>
                       <TableCell>{activity.appName}</TableCell>
                       <TableCell>{activity.owner}</TableCell>
                       <TableCell>{activity.ca}</TableCell>
@@ -288,11 +346,11 @@ const Activity: React.FC = () => {
                           size="sm"
                           onClick={() =>
                             window.open(
-                              `http://10.45.24.183:5000/api/certificates/download/${activity.dns}.csr`
+                              `http://localhost:5000/api/certificates/download-zip/${activity.dns}`
                             )
                           }
-                        >
-                          <Download className="h-4 w-4 mr-1" /> CSR
+                        ><Download className="h-4 w-4 mr-2" />
+                          ZIP
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -308,4 +366,3 @@ const Activity: React.FC = () => {
 };
 
 export default Activity;
-

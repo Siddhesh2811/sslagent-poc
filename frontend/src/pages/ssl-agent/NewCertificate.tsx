@@ -52,7 +52,7 @@ const NewCertificate: React.FC = () => {
 
   const onSubmit = async (data: NewCertificateForm) => {
     try {
-      const response = await fetch("http://10.45.24.183:5000/api/certificates", {
+      const response = await fetch("http://localhost:5000/api/certificates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),

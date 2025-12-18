@@ -4,10 +4,13 @@ import cors from "cors";
 import bodyParser from "body-parser";
 import fs from "fs";
 import mysql from "mysql2/promise";
+import AdmZip from "adm-zip";
+import { upload } from "./upload.js";
 
 import { generateCnf } from "./generateCnf.js";
-import { generateCSRAndKey, getCSRMD5, getKeyMD5 } from "./opensslActions.js";
+import { generateCSRAndKey, getCSRMD5, getKeyMD5, getCRTMD5, generatePFX } from "./opensslActions.js";
 import { initMongo, uploadToGridFS, downloadFromGridFS } from "./gridfs.js";
+import { createCSRZipBuffer } from "./zipUtils.js";
 
 const app = express();
 const PORT = 5000;
@@ -81,17 +84,20 @@ app.get("/api/certificates/activity", async (req, res) => {
 // ----------------------------
 // Download CSR
 // ----------------------------
-app.get("/api/certificates/download/:filename", async (req, res) => {
+app.get("/api/certificates/download-zip/:dns", async (req, res) => {
   try {
-    const stream = await downloadFromGridFS(req.params.filename);
+    const filename = `${req.params.dns}.zip`;
+    const stream = await downloadFromGridFS(filename);
+
     res.set({
-      "Content-Type": "application/pkcs10",
-      "Content-Disposition": `attachment; filename="${req.params.filename}"`,
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${filename}"`,
     });
+
     stream.pipe(res);
   } catch (err) {
-    console.error("CSR download error:", err);
-    res.status(404).json({ message: "CSR not found" });
+    console.error("ZIP download error:", err);
+    res.status(404).json({ message: "ZIP file not found" });
   }
 });
 
@@ -99,7 +105,16 @@ app.get("/api/certificates/download/:filename", async (req, res) => {
 // Main CSR creation endpoint
 // ----------------------------
 app.post("/api/certificates", async (req, res) => {
-  const { appName, appOwner, appSPOC, dns, ca = "Godaddy", san = [], remarks, created_by } = req.body;
+  const {
+    appName,
+    appOwner,
+    appSPOC,
+    dns,
+    ca = "Godaddy",
+    san = [],
+    remarks,
+    created_by,
+  } = req.body;
 
   if (!appName || !appOwner || !dns)
     return res.status(400).json({ message: "Missing required fields." });
@@ -119,7 +134,9 @@ app.post("/api/certificates", async (req, res) => {
     keyContent = gen.keyContent;
   } catch (err) {
     if (fs.existsSync(cnfPath)) fs.unlinkSync(cnfPath);
-    return res.status(500).json({ message: "OpenSSL failed", error: String(err) });
+    return res
+      .status(500)
+      .json({ message: "OpenSSL failed", error: String(err) });
   }
 
   try {
@@ -130,19 +147,22 @@ app.post("/api/certificates", async (req, res) => {
     console.log("KEY MD5:", key_md5);
 
     if (!csr_md5 || !key_md5 || csr_md5 === EMPTY_MD5 || key_md5 === EMPTY_MD5)
-      return res.status(422).json({ message: "Invalid CSR/Key modulus", csr_md5, key_md5 });
+      return res
+        .status(422)
+        .json({ message: "Invalid CSR/Key modulus", csr_md5, key_md5 });
 
     // --------------------------
     // Upload CSR + KEY to GridFS
     // --------------------------
-    const csrFile = await uploadToGridFS(`${dns}.csr`, csrContent);
-    const keyFile = await uploadToGridFS(`${dns}.key`, keyContent);
+    // Create ZIP containing CSR + KEY
+    const zipBuffer = await createCSRZipBuffer(dns, csrContent, keyContent);
 
-    if (!csrFile || !csrFile._id)
-      throw new Error("GridFS upload failed: csrFile._id missing");
+    // Upload ZIP to GridFS
+    const zipFile = await uploadToGridFS(`${dns}.zip`, zipBuffer);
 
-    if (!keyFile || !keyFile._id)
-      throw new Error("GridFS upload failed: keyFile._id missing");
+    if (!zipFile || !zipFile._id) {
+      throw new Error("GridFS ZIP upload failed");
+    }
 
     // --------------------------
     // Check duplicate in MySQL
@@ -192,11 +212,10 @@ app.post("/api/certificates", async (req, res) => {
       message: `CSR & Key generated successfully for ${dns}`,
       csr_md5,
       key_md5,
-      csr_gridfs_id: csrFile._id,
-      key_gridfs_id: keyFile._id,
-      mysql: result,
+      zip_filename: `${dns}.zip`,
+      zip_gridfs_id: zipFile._id,
+      mysqlResult: result,
     });
-
   } catch (err) {
     console.error("❌ CSR Generation Error:", err);
 
@@ -205,12 +224,107 @@ app.post("/api/certificates", async (req, res) => {
     if (fs.existsSync(csrPath)) fs.unlinkSync(csrPath);
     if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
 
-    return res.status(500).json({ message: "CSR processing failed", error: String(err) });
+    return res
+      .status(500)
+      .json({ message: "CSR processing failed", error: String(err) });
   }
 });
 
-// ----------------------------
+// PFX GENERATION ----------------------------
+app.post(
+  "/api/certificates/pfx",
+  upload.single("newCrt"),
+  async (req, res) => {
+    try {
+      const { dns } = req.body;
+      const crtBuffer = req.file?.buffer;
+
+      if (!dns || !crtBuffer) {
+        return res.status(400).json({ message: "DNS and CRT are required" });
+      }
+
+      // Save CRT temporarily
+      const crtPath = `${dns}.crt`;
+      fs.writeFileSync(crtPath, crtBuffer);
+
+      // Compute CRT modulus MD5
+      const crt_md5 = await getCRTMD5(crtPath);
+
+      // Find matching CSR record
+      const [rows] = await mysqlPool.execute(
+        `SELECT csr_md5, key_md5 FROM CSR WHERE csr_md5 = ? LIMIT 1`,
+        [crt_md5]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "No matching CSR found" });
+      }
+
+      // Download existing ZIP from GridFS
+      const zipStream = await downloadFromGridFS(`${dns}.zip`);
+      const zipBuffer = await streamToBuffer(zipStream);
+
+      // Extract KEY from ZIP
+      const zip = new AdmZip(zipBuffer);
+      const keyEntry = zip.getEntry(`${dns}.key`);
+      const csrEntry = zip.getEntry(`${dns}.csr`);
+
+      if (!keyEntry || !csrEntry) {
+        throw new Error("ZIP missing CSR or KEY");
+      }
+
+      fs.writeFileSync(`${dns}.key`, keyEntry.getData());
+
+      // Generate PFX
+      const PFX_PASSWORD = "password";
+      const pfxPath = `${dns}.pfx`;
+
+      await generatePFX(crtPath, `${dns}.key`, pfxPath, PFX_PASSWORD);
+
+      // Rebuild ZIP with csr + key + crt + pfx
+      const newZip = new AdmZip();
+      newZip.addFile(`${dns}.csr`, csrEntry.getData());
+      newZip.addFile(`${dns}.key`, keyEntry.getData());
+      newZip.addFile(`${dns}.crt`, crtBuffer);
+      newZip.addFile(`${dns}.pfx`, fs.readFileSync(pfxPath));
+
+      const finalZipBuffer = newZip.toBuffer();
+
+      // Upload updated ZIP to GridFS
+      await uploadToGridFS(`${dns}.zip`, finalZipBuffer);
+
+      // Insert into CRTPFX table
+      await mysqlPool.execute(
+        `INSERT INTO CRTPFX 
+         (cert_upload_date, cert_upload_user, crt_md5, csr_md5, key_md5, pfx_generation_status)
+         VALUES (NOW(), ?, ?, ?, ?, ?)`,
+        ["system", crt_md5, rows[0].csr_md5, rows[0].key_md5, "COMPLETED"]
+      );
+
+      return res.json({
+        message: "PFX generated successfully",
+        pfx_password: PFX_PASSWORD
+      });
+
+    } catch (err) {
+      console.error("❌ PFX generation failed:", err);
+      res.status(500).json({ message: "PFX generation failed" });
+    }
+  }
+);
+
+// MAIN BACKEND RUNNING---------------------
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
 });
+
+// HELPER FUNCTION----------------------
+function streamToBuffer(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", (c) => chunks.push(c));
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+    stream.on("error", reject);
+  });
+}
 

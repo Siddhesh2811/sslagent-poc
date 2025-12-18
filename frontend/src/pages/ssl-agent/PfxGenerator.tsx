@@ -1,12 +1,12 @@
-import React from 'react';
-import { useForm } from 'react-hook-form';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { FileUpload } from '@/components/FileUpload';
-import { Package } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import React from "react";
+import { useForm } from "react-hook-form";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { FileUpload } from "@/components/FileUpload";
+import { Package } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface PfxGeneratorForm {
   dns: string;
@@ -15,18 +15,58 @@ interface PfxGeneratorForm {
 
 const PfxGenerator: React.FC = () => {
   const { toast } = useToast();
-  const { register, handleSubmit, formState: { errors }, setValue, watch } = useForm<PfxGeneratorForm>({
-    defaultValues: { newCrt: null }
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+    setValue,
+    watch,
+  } = useForm<PfxGeneratorForm>({
+    defaultValues: { newCrt: null },
   });
 
-  const newCrt = watch('newCrt');
+  const newCrt = watch("newCrt");
 
-  const onSubmit = (data: PfxGeneratorForm) => {
-    console.log('PFX Generator Request:', data);
-    toast({
-      title: "PFX generation submitted",
-      description: `PFX generation request for ${data.dns} has been submitted successfully.`,
-    });
+  const onSubmit = async (data: PfxGeneratorForm) => {
+    if (!data.newCrt) {
+      toast({
+        title: "Error",
+        description: "Please upload a .crt file",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append("dns", data.dns);
+      formData.append("newCrt", data.newCrt);
+
+      const response = await fetch(
+        "http://<SERVER-IP>:5000/api/certificates/pfx",
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || "PFX generation failed");
+      }
+
+      toast({
+        title: "PFX Generated Successfully",
+        description: `Password: ${result.password}`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "PFX Generation Failed",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -36,7 +76,9 @@ const PfxGenerator: React.FC = () => {
           <Package className="h-8 w-8" />
           PFX Generator
         </h1>
-        <p className="text-muted-foreground">Generate a PFX file from your certificate</p>
+        <p className="text-muted-foreground">
+          Generate a PFX file from your certificate
+        </p>
       </div>
 
       <Card className="shadow-card">
@@ -47,8 +89,10 @@ const PfxGenerator: React.FC = () => {
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div>
               <Label htmlFor="dns">DNS *</Label>
-              <Input {...register('dns', { required: 'DNS is required' })} />
-              {errors.dns && <p className="text-sm text-destructive">{errors.dns.message}</p>}
+              <Input {...register("dns", { required: "DNS is required" })} />
+              {errors.dns && (
+                <p className="text-sm text-destructive">{errors.dns.message}</p>
+              )}
             </div>
 
             <div>
@@ -56,14 +100,21 @@ const PfxGenerator: React.FC = () => {
               <FileUpload
                 accept=".crt"
                 value={newCrt}
-                onChange={(file) => setValue('newCrt', file as File | null)}
+                onChange={(file) => setValue("newCrt", file as File | null)}
                 placeholder="Upload new .crt file"
                 required
               />
-              {!newCrt && <p className="text-sm text-destructive">New .crt file is required</p>}
+              {!newCrt && (
+                <p className="text-sm text-destructive">
+                  New .crt file is required
+                </p>
+              )}
             </div>
 
-            <Button type="submit" className="bg-gradient-primary hover:bg-primary-glow">
+            <Button
+              type="submit"
+              className="bg-gradient-primary hover:bg-primary-glow"
+            >
               Generate PFX
             </Button>
           </form>
