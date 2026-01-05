@@ -230,11 +230,15 @@ app.post("/api/certificates", async (req, res) => {
   }
 });
 
-// PFX GENERATION ----------------------------
+// ----------------------------
+// PFX GENERATION (NO FILE RETENTION)
+// ----------------------------
 app.post(
   "/api/certificates/pfx",
   upload.single("newCrt"),
   async (req, res) => {
+    let crtPath, keyPath, pfxPath;
+
     try {
       const { dns } = req.body;
       const crtBuffer = req.file?.buffer;
@@ -243,45 +247,58 @@ app.post(
         return res.status(400).json({ message: "DNS and CRT are required" });
       }
 
+      // ----------------------------
+      // TEMP FILE PATHS
+      // ----------------------------
+      crtPath = `${dns}.crt`;
+      keyPath = `${dns}.key`;
+      pfxPath = `${dns}.pfx`;
+
       // Save CRT temporarily
-      const crtPath = `${dns}.crt`;
       fs.writeFileSync(crtPath, crtBuffer);
 
       // Compute CRT modulus MD5
       const crt_md5 = await getCRTMD5(crtPath);
 
-      // Find matching CSR record
+      // ----------------------------
+      // Find matching CSR
+      // ----------------------------
       const [rows] = await mysqlPool.execute(
         `SELECT csr_md5, key_md5 FROM CSR WHERE csr_md5 = ? LIMIT 1`,
         [crt_md5]
       );
 
       if (rows.length === 0) {
-        return res.status(404).json({ message: "No matching CSR found" });
+        throw new Error("No matching CSR found for uploaded CRT");
       }
 
-      // Download existing ZIP from GridFS
+      // ----------------------------
+      // Download existing ZIP from MongoDB
+      // ----------------------------
       const zipStream = await downloadFromGridFS(`${dns}.zip`);
       const zipBuffer = await streamToBuffer(zipStream);
-
-      // Extract KEY from ZIP
       const zip = new AdmZip(zipBuffer);
-      const keyEntry = zip.getEntry(`${dns}.key`);
-      const csrEntry = zip.getEntry(`${dns}.csr`);
 
-      if (!keyEntry || !csrEntry) {
-        throw new Error("ZIP missing CSR or KEY");
+      const csrEntry = zip.getEntry(`${dns}.csr`);
+      const keyEntry = zip.getEntry(`${dns}.key`);
+
+      if (!csrEntry || !keyEntry) {
+        throw new Error("ZIP does not contain CSR or KEY");
       }
 
-      fs.writeFileSync(`${dns}.key`, keyEntry.getData());
+      // Write KEY temporarily
+      fs.writeFileSync(keyPath, keyEntry.getData());
 
+      // ----------------------------
       // Generate PFX
+      // ----------------------------
       const PFX_PASSWORD = "password";
-      const pfxPath = `${dns}.pfx`;
 
-      await generatePFX(crtPath, `${dns}.key`, pfxPath, PFX_PASSWORD);
+      await generatePFX(crtPath, keyPath, pfxPath, PFX_PASSWORD);
 
-      // Rebuild ZIP with csr + key + crt + pfx
+      // ----------------------------
+      // Build NEW ZIP (overwrite old one)
+      // ----------------------------
       const newZip = new AdmZip();
       newZip.addFile(`${dns}.csr`, csrEntry.getData());
       newZip.addFile(`${dns}.key`, keyEntry.getData());
@@ -290,28 +307,42 @@ app.post(
 
       const finalZipBuffer = newZip.toBuffer();
 
-      // Upload updated ZIP to GridFS
+      // Upload updated ZIP to MongoDB
       await uploadToGridFS(`${dns}.zip`, finalZipBuffer);
 
-      // Insert into CRTPFX table
+      // ----------------------------
+      // Insert DB record
+      // ----------------------------
       await mysqlPool.execute(
-        `INSERT INTO CRTPFX 
+        `INSERT INTO CRTPFX
          (cert_upload_date, cert_upload_user, crt_md5, csr_md5, key_md5, pfx_generation_status)
          VALUES (NOW(), ?, ?, ?, ?, ?)`,
-        ["system", crt_md5, rows[0].csr_md5, rows[0].key_md5, "COMPLETED"]
+        ["system", crt_md5, rows[0].csr_md5, rows[0].key_md5, "PFX Generated"]
       );
 
       return res.json({
         message: "PFX generated successfully",
-        pfx_password: PFX_PASSWORD
+        password: PFX_PASSWORD,
       });
 
     } catch (err) {
       console.error("❌ PFX generation failed:", err);
-      res.status(500).json({ message: "PFX generation failed" });
+      return res.status(500).json({ message: err.message });
+    } finally {
+      // ----------------------------
+      // HARD CLEANUP (NO RETENTION)
+      // ----------------------------
+      [crtPath, keyPath, pfxPath].forEach((file) => {
+        if (file && fs.existsSync(file)) {
+          try {
+            fs.unlinkSync(file);
+          } catch (_) {}
+        }
+      });
     }
   }
 );
+
 
 // MAIN BACKEND RUNNING---------------------
 app.listen(PORT, () => {

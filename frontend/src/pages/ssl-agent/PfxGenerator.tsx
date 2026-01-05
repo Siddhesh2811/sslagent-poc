@@ -43,7 +43,7 @@ const PfxGenerator: React.FC = () => {
       formData.append("newCrt", data.newCrt);
 
       const response = await fetch(
-        "http://<SERVER-IP>:5000/api/certificates/pfx",
+        "http://localhost:5000/api/certificates/pfx",
         {
           method: "POST",
           body: formData,
