@@ -231,6 +231,94 @@ app.post("/api/certificates", async (req, res) => {
 });
 
 // ----------------------------
+// RENEW / DOWNLOAD KEY & CSR FROM CRT
+// ----------------------------
+app.post(
+  "/api/certificates/renew",
+  upload.single("existingCrt"),
+  async (req, res) => {
+    let crtPath;
+
+    try {
+      const { dns } = req.body;
+      const crtBuffer = req.file?.buffer;
+
+      if (!dns || !crtBuffer) {
+        return res.status(400).json({ message: "DNS and existing CRT are required" });
+      }
+
+      console.log(`♻️ Renewal Request for: ${dns}`);
+
+      // ----------------------------
+      // TEMP FILE
+      // ----------------------------
+      crtPath = `${dns}_renew_temp.crt`;
+      fs.writeFileSync(crtPath, crtBuffer);
+
+      // ----------------------------
+      // Compute MD5
+      // ----------------------------
+      const crt_md5 = await getCRTMD5(crtPath);
+      console.log(`Existing CRT MD5: ${crt_md5}`);
+
+      // ----------------------------
+      // Find Matching CSR in DB
+      // ----------------------------
+      const [rows] = await mysqlPool.execute(
+        `SELECT common_name, csr_md5 FROM CSR WHERE csr_md5 = ? LIMIT 1`,
+        [crt_md5]
+      );
+
+      if (rows.length === 0) {
+        return res.status(404).json({ 
+          message: "No matching original request found for this certificate." 
+        });
+      }
+
+      const match = rows[0];
+
+      // Security Check: Verify DNS matches
+      if (match.common_name !== dns) {
+        return res.status(400).json({ 
+          message: `DNS mismatch. This certificate belongs to ${match.common_name}, not ${dns}.` 
+        });
+      }
+
+      // ----------------------------
+      // Retrieve ZIP from GridFS
+      // ----------------------------
+      // Attempt to download ZIP by common_name (assuming format: dns.zip)
+      // Note: If multiple exists, this simple logic might need improvement, 
+      // but typically we overwrite or rely on the latest.
+      const filename = `${match.common_name}.zip`;
+      
+      try {
+        const zipStream = await downloadFromGridFS(filename);
+        
+        res.set({
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+        });
+
+        zipStream.pipe(res);
+      } catch (gridErr) {
+        console.error("GridFS Download Error:", gridErr);
+        return res.status(404).json({ message: "Original Key/CSR files not found in storage." });
+      }
+
+    } catch (err) {
+      console.error("❌ Renewal Error:", err);
+      res.status(500).json({ message: "Renewal process failed", error: String(err) });
+    } finally {
+      // Cleanup
+      if (crtPath && fs.existsSync(crtPath)) {
+        try { fs.unlinkSync(crtPath); } catch (_) {}
+      }
+    }
+  }
+);
+
+// ----------------------------
 // PFX GENERATION (NO FILE RETENTION)
 // ----------------------------
 app.post(

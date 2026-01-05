@@ -21,12 +21,54 @@ const RenewCertificate: React.FC = () => {
 
   const existingCrt = watch('existingCrt');
 
-  const onSubmit = (data: RenewCertificateForm) => {
-    console.log('Renew Certificate Request:', data);
-    toast({
-      title: "Certificate renewal submitted",
-      description: `Renewal request for ${data.dns} has been submitted successfully.`,
-    });
+  const onSubmit = async (data: RenewCertificateForm) => {
+    try {
+      if (!data.existingCrt) {
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Please upload an existing .crt file",
+        });
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('dns', data.dns);
+      formData.append('existingCrt', data.existingCrt);
+
+      const response = await fetch('http://localhost:5000/api/certificates/renew', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Renewal failed');
+      }
+
+      // Handle File Download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${data.dns}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Success",
+        description: `Original Key & CSR downloaded for ${data.dns}`,
+      });
+    } catch (error) {
+      console.error('Renew error:', error);
+      toast({
+        variant: "destructive",
+        title: "Renewal Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+      });
+    }
   };
 
   return (
