@@ -103,10 +103,39 @@ export async function getCertInfo(crtPath) {
     issuer = issuerO[1].trim();
   }
 
+  // Extract SANs manually
+  let sans = [];
+  try {
+    const { stdout: extOut } = await execAsync(
+      `openssl x509 -noout -ext subjectAltName -in "${crtPath}"`
+    );
+    // Output example: 
+    // X509v3 Subject Alternative Name: 
+    //      DNS:example.com, DNS:www.example.com, IP Address:1.2.3.4
+
+    if (extOut.includes("Subject Alternative Name")) {
+      const sanString = extOut.split("Name:")[1] || "";
+      const items = sanString.split(",").map(s => s.trim());
+
+      items.forEach(item => {
+        if (item.startsWith("DNS:")) {
+          sans.push(item.replace("DNS:", ""));
+        } else if (item.startsWith("IP Address:")) {
+          sans.push(item.replace("IP Address:", ""));
+        }
+        // Can add other types if needed
+      });
+    }
+  } catch (e) {
+    // Ignore if no SAN extension found or error
+    console.log("No SANs found or error extracting:", e.message);
+  }
+
   return {
     commonName: subjectMatch ? subjectMatch[1].trim() : null,
     fullSubject: subjectOut.trim(),
-    issuer: issuer
+    issuer: issuer,
+    san: sans
   };
 }
 

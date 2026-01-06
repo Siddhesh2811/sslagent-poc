@@ -1,9 +1,14 @@
 export function generateCnf(fqdn, sanList = []) {
+  // Ensure CN is in SAN list
+  const distinctSan = new Set(sanList);
+  distinctSan.add(fqdn);
+  const finalSanList = Array.from(distinctSan);
+
   const base = `
 [ req ]
 default_md = sha256
 prompt = no
-${sanList.length > 0 ? "req_extensions = v3_req" : ""}
+req_extensions = v3_req
 distinguished_name = dn
 
 [ dn ]
@@ -15,14 +20,12 @@ OU = SAP BASIS
 CN = ${fqdn}
 `;
 
-  if (sanList.length === 0) return base;
-
   const sanBlock = `
 [ v3_req ]
 subjectAltName = @alt_names
 
 [ alt_names ]
-${sanList.map((s, i) => `DNS.${i + 1} = ${s}`).join("\n")}
+${finalSanList.map((s, i) => `DNS.${i + 1} = ${s}`).join("\n")}
 `;
 
   return base + sanBlock;

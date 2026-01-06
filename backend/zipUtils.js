@@ -1,7 +1,7 @@
 import archiver from "archiver";
 import { PassThrough } from "stream";
 
-export function createCSRZipBuffer(dns, csrBuffer, keyBuffer) {
+export function createCSRZipBuffer(dns, csrBuffer, keyBuffer, cnfBuffer = null) {
   return new Promise((resolve, reject) => {
     const archive = archiver("zip", { zlib: { level: 9 } });
     const stream = new PassThrough();
@@ -15,6 +15,10 @@ export function createCSRZipBuffer(dns, csrBuffer, keyBuffer) {
 
     archive.append(csrBuffer, { name: `${dns}.csr` });
     archive.append(keyBuffer, { name: `${dns}.key` });
+
+    if (cnfBuffer) {
+      archive.append(cnfBuffer, { name: `${dns}.cnf` });
+    }
 
     archive.finalize();
   });

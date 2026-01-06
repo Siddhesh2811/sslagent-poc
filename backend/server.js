@@ -152,10 +152,11 @@ app.post("/api/certificates", async (req, res) => {
         .json({ message: "Invalid CSR/Key modulus", csr_md5, key_md5 });
 
     // --------------------------
-    // Upload CSR + KEY to GridFS
+    // Upload CSR + KEY + CNF to GridFS
     // --------------------------
-    // Create ZIP containing CSR + KEY
-    const zipBuffer = await createCSRZipBuffer(dns, csrContent, keyContent);
+    // Create ZIP containing CSR + KEY + CNF
+    const cnfContent = fs.existsSync(cnfPath) ? fs.readFileSync(cnfPath) : null;
+    const zipBuffer = await createCSRZipBuffer(dns, csrContent, keyContent, cnfContent);
 
     // Upload ZIP to GridFS
     const zipFile = await uploadToGridFS(`${dns}.zip`, zipBuffer);
@@ -380,6 +381,7 @@ app.post(
       // ----------------------------
       const certInfo = await getCertInfo(crtPath);
       const dns = certInfo.commonName;
+      const san = certInfo.san || [];
 
       if (!dns) {
         throw new Error("Could not extract Common Name (CN) from certificate.");
@@ -426,6 +428,10 @@ app.post(
       zip.addFile(`${dns}.key`, keyBuffer);
       zip.addFile(`${dns}.crt`, crtBuffer); // Bonus: Store the CRT too since we have it.
 
+      // Generate and store CNF
+      const cnfContent = generateCnf(dns, san);
+      zip.addFile(`${dns}.cnf`, Buffer.from(cnfContent));
+
       const zipBuffer = zip.toBuffer();
       const zipFile = await uploadToGridFS(`${dns}.zip`, zipBuffer);
 
@@ -440,7 +446,7 @@ app.post(
         [
           appName,
           dns,
-          JSON.stringify([]), // No SANs extracted for now, or could parse them.
+          JSON.stringify(san), // Store extracted SANs
           appOwner,
           appSPOC || "",
           certInfo.issuer || "Imported", // Use extracted Issuer
