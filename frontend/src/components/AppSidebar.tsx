@@ -11,14 +11,15 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { 
-  Home, 
-  Shield, 
-  PlusCircle, 
-  RefreshCw, 
-  Package, 
+import {
+  Home,
+  Shield,
+  PlusCircle,
+  RefreshCw,
+  Package,
   Upload,
-  Activity
+  Activity,
+  ListPlus
 } from 'lucide-react';
 
 const navigationItems = [
@@ -31,6 +32,7 @@ const sslAgentItems = [
   { title: 'Renew Certificate', url: '/ssl-agent/renew', icon: RefreshCw },
   { title: 'PFX Generator', url: '/ssl-agent/pfx', icon: Package },
   { title: 'CRT & KEY Uploader', url: '/ssl-agent/upload', icon: Upload },
+  { title: 'SAN Update', url: '/ssl-agent/san-addition', icon: ListPlus },
 ];
 
 export function AppSidebar() {
@@ -42,8 +44,8 @@ export function AppSidebar() {
   const isCollapsed = state === "collapsed";
 
   const getNavClass = (isActive: boolean) =>
-    isActive 
-      ? "bg-sidebar-accent text-sidebar-primary font-medium" 
+    isActive
+      ? "bg-sidebar-accent text-sidebar-primary font-medium"
       : "hover:bg-sidebar-accent/50";
 
   return (

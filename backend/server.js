@@ -8,7 +8,7 @@ import AdmZip from "adm-zip";
 import { upload } from "./upload.js";
 
 import { generateCnf } from "./generateCnf.js";
-import { generateCSRAndKey, getCSRMD5, getKeyMD5, getCRTMD5, generatePFX, getCertInfo, generateCSRFromCert } from "./opensslActions.js";
+import { generateCSRAndKey, getCSRMD5, getKeyMD5, getCRTMD5, generatePFX, getCertInfo, generateCSRFromCert, generateCSRFromKey } from "./opensslActions.js";
 import { initMongo, uploadToGridFS, downloadFromGridFS } from "./gridfs.js";
 import { createCSRZipBuffer } from "./zipUtils.js";
 
@@ -599,6 +599,133 @@ app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
 });
 
+// ----------------------------
+// SAN ADDITION / UPDATE
+// ----------------------------
+
+// 1. Analyze Uploaded CRT
+app.post("/api/certificates/analyze", upload.single("existingCrt"), async (req, res) => {
+  let crtPath;
+  try {
+    const crtBuffer = req.file?.buffer;
+    if (!crtBuffer) return res.status(400).json({ message: "Certificate file is required" });
+
+    const id = Date.now();
+    crtPath = `analyze_${id}.crt`;
+    fs.writeFileSync(crtPath, crtBuffer);
+
+    // Get MD5 to check if we have the key
+    const crt_md5 = await getCRTMD5(crtPath);
+    console.log(`Analyze | CRT MD5: ${crt_md5}`);
+
+    // Check DB
+    const [rows] = await mysqlPool.execute(
+      `SELECT common_name, csr_md5, key_md5 FROM CSR WHERE csr_md5 = ? LIMIT 1`,
+      [crt_md5]
+    );
+
+    const isKeyAvailable = rows.length > 0;
+
+    // Extract Info
+    const certInfo = await getCertInfo(crtPath);
+
+    // Cleanup
+    fs.unlinkSync(crtPath);
+
+    if (!isKeyAvailable) {
+      return res.status(404).json({
+        message: "This certificate is not in our system. Please import it first via the 'CRT & Key Uploader'."
+      });
+    }
+
+    res.json({
+      dns: certInfo.commonName,
+      san: certInfo.san || [],
+      isKeyAvailable,
+      dbRecord: rows[0]
+    });
+
+  } catch (err) {
+    console.error("Analyze Error:", err);
+    if (crtPath && fs.existsSync(crtPath)) fs.unlinkSync(crtPath);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// 2. Update SAN & Regenerate CSR
+app.post("/api/certificates/update-san", async (req, res) => {
+  let tempKeyPath, tempCnfPath, tempCsrPath;
+  try {
+    const { dns, sanList } = req.body;
+    if (!dns || !sanList) return res.status(400).json({ message: "DNS and SAN List are required" });
+
+    console.log(`Update SAN for ${dns}:`, sanList, typeof sanList);
+
+    // 1. Download existing ZIP to get the Key
+    const filename = `${dns}.zip`;
+    const zipStream = await downloadFromGridFS(filename);
+    const zipBuffer = await streamToBuffer(zipStream);
+    const zip = new AdmZip(zipBuffer);
+
+    const keyEntry = zip.getEntry(`${dns}.key`);
+    if (!keyEntry) throw new Error("Original Private Key not found in storage");
+
+    const keyBuffer = keyEntry.getData();
+    // We can also keep the original CRT if we want, but for now we are generating a NEW CSR request.
+    const crtEntry = zip.getEntry(`${dns}.crt`);
+    const crtBuffer = crtEntry ? crtEntry.getData() : null;
+
+    // 2. Setup Temp Files
+    const id = Date.now();
+    tempKeyPath = `update_${id}.key`;
+    tempCnfPath = `update_${id}.cnf`;
+    tempCsrPath = `update_${id}.csr`;
+
+    fs.writeFileSync(tempKeyPath, keyBuffer);
+
+    // 3. Generate New CNF
+    const cnfContent = generateCnf(dns, sanList);
+    fs.writeFileSync(tempCnfPath, cnfContent);
+
+    // 4. Generate New CSR using Existing Key + New CNF
+    // We need a helper for this: generateCSRFromKey(keyPath, cnfPath, csrPath)
+    const csrBuffer = await generateCSRFromKey(tempKeyPath, tempCnfPath, tempCsrPath);
+
+    if (!csrBuffer) throw new Error("Failed to regenerate CSR");
+
+    // 5. Update DB (SAN column and CSR MD5)
+    // Calculate new CSR MD5
+    const new_csr_md5 = await getCSRMD5(tempCsrPath);
+
+    // Update MySQL
+    await mysqlPool.execute(
+      `UPDATE CSR SET san = ?, csr_md5 = ?, remarks = CONCAT(remarks, ' | SAN Updated') WHERE common_name = ?`,
+      [JSON.stringify(sanList), new_csr_md5, dns]
+    );
+
+    // 6. Upload New ZIP
+    const newZip = new AdmZip();
+    newZip.addFile(`${dns}.csr`, csrBuffer);
+    newZip.addFile(`${dns}.key`, keyBuffer); // Same Key
+    newZip.addFile(`${dns}.cnf`, Buffer.from(cnfContent));
+    if (crtBuffer) newZip.addFile(`${dns}.crt`, crtBuffer); // Keep old CRT if present
+
+    const newZipBuffer = newZip.toBuffer();
+    // Start fresh or replace? GridFS logic usually accumulates or we can just upload with same name (GridFS allows duplicates, we download latest)
+    // Ideally delete old, but for safety lets just upload new version.
+    await uploadToGridFS(`${dns}.zip`, newZipBuffer);
+
+    res.json({ message: "SAN List Updated & CSR Regenerated", new_csr_md5 });
+
+  } catch (err) {
+    console.error("Update SAN Error:", err);
+    res.status(500).json({ message: err.message });
+  } finally {
+    [tempKeyPath, tempCnfPath, tempCsrPath].forEach(f => {
+      if (f && fs.existsSync(f)) try { fs.unlinkSync(f); } catch (_) { }
+    });
+  }
+});
 // HELPER FUNCTION----------------------
 function streamToBuffer(stream) {
   return new Promise((resolve, reject) => {
@@ -608,4 +735,3 @@ function streamToBuffer(stream) {
     stream.on("error", reject);
   });
 }
-

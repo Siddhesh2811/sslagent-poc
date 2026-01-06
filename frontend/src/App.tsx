@@ -13,6 +13,7 @@ import NewCertificate from "./pages/ssl-agent/NewCertificate";
 import RenewCertificate from "./pages/ssl-agent/RenewCertificate";
 import PfxGenerator from "./pages/ssl-agent/PfxGenerator";
 import CrtKeyUploader from "./pages/ssl-agent/CrtKeyUploader";
+import SanAddition from "./pages/ssl-agent/SanAddition";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -66,6 +67,13 @@ const App = () => (
               <ProtectedRoute>
                 <Layout>
                   <CrtKeyUploader />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            <Route path="/ssl-agent/san-addition" element={
+              <ProtectedRoute>
+                <Layout>
+                  <SanAddition />
                 </Layout>
               </ProtectedRoute>
             } />

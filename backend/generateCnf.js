@@ -1,8 +1,12 @@
 export function generateCnf(fqdn, sanList = []) {
+  // Ensure we have an array
+  let list = Array.isArray(sanList) ? sanList : [sanList];
+  if (sanList instanceof Set) list = Array.from(sanList);
+
   // Ensure CN is in SAN list
-  const distinctSan = new Set(sanList);
+  const distinctSan = new Set(list.flat()); // flatten in case of nested
   distinctSan.add(fqdn);
-  const finalSanList = Array.from(distinctSan);
+  const finalSanList = Array.from(distinctSan).filter(s => typeof s === 'string' && s.trim() !== '');
 
   const base = `
 [ req ]

@@ -146,3 +146,10 @@ export async function generateCSRFromCert(crtPath, keyPath, csrPath) {
 
   return fs.existsSync(csrPath) ? fs.readFileSync(csrPath) : null;
 }
+
+export async function generateCSRFromKey(keyPath, cnfPath, csrPath) {
+  await execAsync(
+    `openssl req -new -key "${keyPath}" -config "${cnfPath}" -out "${csrPath}"`
+  );
+  return fs.existsSync(csrPath) ? fs.readFileSync(csrPath) : null;
+}
