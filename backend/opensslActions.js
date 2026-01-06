@@ -73,3 +73,47 @@ export async function generatePFX(crtPath, keyPath, pfxPath, password) {
     `openssl pkcs12 -export -out "${pfxPath}" -inkey "${keyPath}" -in "${crtPath}" -password pass:${password}`
   );
 }
+
+export async function getCertInfo(crtPath) {
+  // Extract Subject manually
+  const { stdout: subjectOut } = await execAsync(
+    `openssl x509 -noout -subject -in "${crtPath}"`
+  );
+
+  // Extract Issuer manually
+  const { stdout: issuerOut } = await execAsync(
+    `openssl x509 -noout -issuer -in "${crtPath}"`
+  );
+
+  // Format is usually: subject=CN = example.com
+  // Issuer example: issuer=C = US, O = DigiCert Inc, CN = DigiCert...
+
+  // Extract Subject CN
+  const subjectMatch = subjectOut.match(/CN\s*=\s*([^,\n]+)/);
+
+  // Extract Issuer CN or O
+  // Try CN first, then O
+  let issuer = "Imported";
+  const issuerCN = issuerOut.match(/CN\s*=\s*([^,\n]+)/);
+  const issuerO = issuerOut.match(/O\s*=\s*([^,\n]+)/);
+
+  if (issuerCN) {
+    issuer = issuerCN[1].trim();
+  } else if (issuerO) {
+    issuer = issuerO[1].trim();
+  }
+
+  return {
+    commonName: subjectMatch ? subjectMatch[1].trim() : null,
+    fullSubject: subjectOut.trim(),
+    issuer: issuer
+  };
+}
+
+export async function generateCSRFromCert(crtPath, keyPath, csrPath) {
+  await execAsync(
+    `openssl x509 -x509toreq -in "${crtPath}" -signkey "${keyPath}" -out "${csrPath}"`
+  );
+
+  return fs.existsSync(csrPath) ? fs.readFileSync(csrPath) : null;
+}

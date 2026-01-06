@@ -8,7 +8,7 @@ import AdmZip from "adm-zip";
 import { upload } from "./upload.js";
 
 import { generateCnf } from "./generateCnf.js";
-import { generateCSRAndKey, getCSRMD5, getKeyMD5, getCRTMD5, generatePFX } from "./opensslActions.js";
+import { generateCSRAndKey, getCSRMD5, getKeyMD5, getCRTMD5, generatePFX, getCertInfo, generateCSRFromCert } from "./opensslActions.js";
 import { initMongo, uploadToGridFS, downloadFromGridFS } from "./gridfs.js";
 import { createCSRZipBuffer } from "./zipUtils.js";
 
@@ -270,8 +270,8 @@ app.post(
       );
 
       if (rows.length === 0) {
-        return res.status(404).json({ 
-          message: "No matching original request found for this certificate." 
+        return res.status(404).json({
+          message: "No matching original request found for this certificate."
         });
       }
 
@@ -279,8 +279,8 @@ app.post(
 
       // Security Check: Verify DNS matches
       if (match.common_name !== dns) {
-        return res.status(400).json({ 
-          message: `DNS mismatch. This certificate belongs to ${match.common_name}, not ${dns}.` 
+        return res.status(400).json({
+          message: `DNS mismatch. This certificate belongs to ${match.common_name}, not ${dns}.`
         });
       }
 
@@ -291,10 +291,10 @@ app.post(
       // Note: If multiple exists, this simple logic might need improvement, 
       // but typically we overwrite or rely on the latest.
       const filename = `${match.common_name}.zip`;
-      
+
       try {
         const zipStream = await downloadFromGridFS(filename);
-        
+
         res.set({
           "Content-Type": "application/zip",
           "Content-Disposition": `attachment; filename="${filename}"`,
@@ -312,8 +312,162 @@ app.post(
     } finally {
       // Cleanup
       if (crtPath && fs.existsSync(crtPath)) {
-        try { fs.unlinkSync(crtPath); } catch (_) {}
+        try { fs.unlinkSync(crtPath); } catch (_) { }
       }
+    }
+  }
+);
+
+// ----------------------------
+// IMPORT CRT & KEY (Reverse CSR Gen)
+// ----------------------------
+app.post(
+  "/api/certificates/import",
+  upload.fields([{ name: "existingCrt" }, { name: "existingKey" }]),
+  async (req, res) => {
+    let crtPath, keyPath, csrPath;
+
+    try {
+      const {
+        appName,
+        appOwner,
+        appSPOC,
+        remarks,
+        ca = "Imported",
+        created_by,
+      } = req.body;
+
+      const files = req.files;
+      const crtBuffer = files["existingCrt"]?.[0]?.buffer;
+      const keyBuffer = files["existingKey"]?.[0]?.buffer;
+
+      if (!crtBuffer || !keyBuffer || !appName || !appOwner) {
+        return res.status(400).json({
+          message: "CRT, Key, App Name, and Owner are required."
+        });
+      }
+
+      // ----------------------------
+      // TEMP FILES
+      // ----------------------------
+      const id = Date.now();
+      crtPath = `import_${id}.crt`;
+      keyPath = `import_${id}.key`;
+      csrPath = `import_${id}.csr`;
+
+      fs.writeFileSync(crtPath, crtBuffer);
+      fs.writeFileSync(keyPath, keyBuffer);
+
+      // ----------------------------
+      // 1. Validate Match (MD5)
+      // ----------------------------
+      const crt_md5 = await getCRTMD5(crtPath);
+      const key_md5 = await getKeyMD5(keyPath);
+
+      console.log(`Import Check | CRT MD5: ${crt_md5} | Key MD5: ${key_md5}`);
+
+      // Basic Check: In a valid pair, CRT modulus == Key modulus
+      // (Using CSR MD5 logic since CRT Modulus matches CSR Modulus matches Key Modulus)
+
+      // Note: getCRTMD5 gets modulus md5. getKeyMD5 gets modulus md5. 
+      // They MUST match.
+      if (crt_md5 !== key_md5) {
+        throw new Error("The uploaded Certificate and Private Key do not match.");
+      }
+
+      // ----------------------------
+      // 2. Extract Common Name
+      // ----------------------------
+      const certInfo = await getCertInfo(crtPath);
+      const dns = certInfo.commonName;
+
+      if (!dns) {
+        throw new Error("Could not extract Common Name (CN) from certificate.");
+      }
+
+      console.log(`Extracted DNS: ${dns}`);
+
+      // ----------------------------
+      // 3. Check Duplicate in DB
+      // ----------------------------
+      const [existing] = await mysqlPool.execute(
+        `SELECT csr_md5 FROM CSR WHERE csr_md5 = ? LIMIT 1`,
+        [crt_md5]
+      );
+
+      if (existing.length > 0) {
+        return res.status(409).json({
+          message: "This certificate already exists in the system.",
+          existing_md5: crt_md5
+        });
+      }
+
+      // ----------------------------
+      // 4. Generate CSR (Reverse)
+      // ----------------------------
+      const csrBuffer = await generateCSRFromCert(crtPath, keyPath, csrPath);
+      if (!csrBuffer) {
+        throw new Error("Failed to generate CSR from Certificate and Key.");
+      }
+      const csr_md5 = await getCSRMD5(csrPath); // Should be same as crt_md5
+
+      // ----------------------------
+      // 5. Store in GridFS (ZIP)
+      // ----------------------------
+      // We store CSR + Key. (CRT is usually stored separately or not stored in the ZIP in the original flow, 
+      // but here we have it. The original flow stores CSR+KEY in ZIP.
+      // We will stick to the standard: ZIP = CSR + KEY. 
+      // The user HAS the CRT, or we can store it too. 
+      // Let's store ALL THREE for imported items to be safe.
+
+      // Reuse zipUtils logic? No, let's just make a zip here.
+      const zip = new AdmZip();
+      zip.addFile(`${dns}.csr`, csrBuffer);
+      zip.addFile(`${dns}.key`, keyBuffer);
+      zip.addFile(`${dns}.crt`, crtBuffer); // Bonus: Store the CRT too since we have it.
+
+      const zipBuffer = zip.toBuffer();
+      const zipFile = await uploadToGridFS(`${dns}.zip`, zipBuffer);
+
+      // ----------------------------
+      // 6. Insert MySQL
+      // ----------------------------
+      const [result] = await mysqlPool.execute(
+        `INSERT INTO CSR 
+          (application_name, common_name, san, application_owner, application_spoc,
+          certificate_type, date, created_by, csr_md5, key_md5, remarks)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)`,
+        [
+          appName,
+          dns,
+          JSON.stringify([]), // No SANs extracted for now, or could parse them.
+          appOwner,
+          appSPOC || "",
+          certInfo.issuer || "Imported", // Use extracted Issuer
+          created_by || "Imported",
+          csr_md5,
+          key_md5,
+          remarks || "Imported via Uploader",
+        ]
+      );
+
+      console.log("✅ Import Success:", result);
+
+      return res.status(201).json({
+        message: "Certificate imported successfully",
+        dns,
+        csr_md5,
+        zip_gridfs_id: zipFile._id
+      });
+
+    } catch (err) {
+      console.error("❌ Import Failed:", err);
+      return res.status(500).json({ message: err.message });
+    } finally {
+      // Cleanup
+      [crtPath, keyPath, csrPath].forEach(f => {
+        if (f && fs.existsSync(f)) try { fs.unlinkSync(f); } catch (_) { }
+      });
     }
   }
 );
@@ -424,12 +578,14 @@ app.post(
         if (file && fs.existsSync(file)) {
           try {
             fs.unlinkSync(file);
-          } catch (_) {}
+          } catch (_) { }
         }
       });
     }
   }
 );
+
+
 
 
 // MAIN BACKEND RUNNING---------------------
