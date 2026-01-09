@@ -43,9 +43,7 @@ const mysqlPool = mysql.createPool({
 // ----------------------------
 await initMongo();
 
-// ----------------------------
 // DB Migration: Add activity_status if not exists
-// ----------------------------
 try {
   const [cols] = await mysqlPool.execute(
     "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'rilssllab' AND TABLE_NAME = 'CSR' AND COLUMN_NAME = 'activity_status'"
@@ -54,6 +52,25 @@ try {
     console.log("⚠️ Column 'activity_status' missing. Adding it...");
     await mysqlPool.execute("ALTER TABLE CSR ADD COLUMN activity_status VARCHAR(50) DEFAULT 'Pending'");
     console.log("✅ Column 'activity_status' added.");
+  }
+
+  // DB Migration: Add 'id' if not exists (For Static IDs)
+  const [idCol] = await mysqlPool.execute(
+    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'rilssllab' AND TABLE_NAME = 'CSR' AND COLUMN_NAME = 'id'"
+  );
+  if (idCol.length === 0) {
+    console.log("⚠️ Column 'id' missing in CSR. Adding it...");
+    // Retrieve all rows to sort by date before adding ID to ensure chronological order if possible, 
+    // or just add it (MySQL adds to existing rows automatically).
+    // Note: If PRIMARY KEY exists (e.g. common_name), we might need to DROP it first or add UNIQUE.
+    // Let's assume common_name is PK. We'll try to add 'id' as unique index auto_increment first.
+    // Safest strategy: Add id INT AUTO_INCREMENT UNIQUE KEY first.
+    try {
+      await mysqlPool.execute("ALTER TABLE CSR ADD COLUMN id INT AUTO_INCREMENT UNIQUE KEY FIRST");
+      console.log("✅ Column 'id' added to CSR.");
+    } catch (e) {
+      console.error("Failed to add id column:", e);
+    }
   }
 
   // Create ActivityLogs table
@@ -92,12 +109,22 @@ const EMPTY_MD5 = "d41d8cd98f00b204e9800998ecf8427e";
 // ----------------------------
 // Activity endpoint
 // ----------------------------
+const getDerivedType = (status) => {
+  if (!status) return "New";
+  if (status.includes("SAN")) return "SAN Update";
+  if (status.includes("PFX")) return "PFX";
+  if (status.includes("Import")) return "Upload";
+  return "New";
+};
+
 app.get("/api/certificates/activity", async (req, res) => {
   try {
     const [rows] = await mysqlPool.execute(
       `SELECT 
+         id,
          application_name,
          common_name,
+         san,
          application_owner,
          application_spoc,
          certificate_type,
@@ -113,9 +140,10 @@ app.get("/api/certificates/activity", async (req, res) => {
     );
 
     const formatted = rows.map((item, idx) => ({
-      id: `SSL${String(idx + 1).padStart(4, "0")}`,
-      type: "New",
+      id: `SSL${String(item.id).padStart(4, "0")}`,
+      type: getDerivedType(item.activity_status),
       dns: item.common_name,
+      sanList: item.san ? JSON.parse(item.san) : [],
       appName: item.application_name,
       owner: item.application_owner,
       spoc: item.application_spoc,
@@ -132,6 +160,21 @@ app.get("/api/certificates/activity", async (req, res) => {
   } catch (err) {
     console.error("❌ Activity fetch error:", err);
     res.status(500).json({ message: "Failed to fetch activity logs" });
+  }
+});
+
+// ----------------------------
+// Recent Activity Endpoint (Global)
+// ----------------------------
+app.get("/api/certificates/recent-activity", async (req, res) => {
+  try {
+    const [rows] = await mysqlPool.execute(
+      `SELECT * FROM ActivityLogs ORDER BY timestamp DESC LIMIT 200`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Recent Activity fetch error:", err);
+    res.status(500).json({ message: "Failed to fetch recent activity" });
   }
 });
 
@@ -371,6 +414,16 @@ app.post(
       const filename = `${match.common_name}.zip`;
 
       try {
+        // Activity Log
+        // Note: 'created_by' is not passed in the current body of this endpoint in server.js analysis, 
+        // we might need to assume 'system' or update frontend to pass it.
+        // Looking at line 328: const { dns } = req.body;
+        // We should extract created_by too.
+
+        await logActivity(dns, "Renew", req.body.created_by, {
+          message: "Certificate renewed/downloaded via Agent"
+        });
+
         const zipStream = await downloadFromGridFS(filename);
 
         res.set({

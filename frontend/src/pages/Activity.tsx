@@ -47,6 +47,7 @@ type ActivityRow = {
   id: string;
   type: string;
   dns: string;
+  sanList?: string[]; // Added
   appName: string;
   owner: string;
   spoc?: string;
@@ -193,15 +194,19 @@ const Activity: React.FC = () => {
   };
 
   const getTypeBadge = (type: string) => {
-    const variants = {
-      New: "default",
-      Renew: "secondary",
-      PFX: "outline",
-      Upload: "outline",
-    } as const;
+    const styles: Record<string, string> = {
+      New: "bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-100",
+      Renew: "bg-orange-100 text-orange-800 border-orange-200 hover:bg-orange-100",
+      "SAN Update": "bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-100",
+      PFX: "bg-green-100 text-green-800 border-green-200 hover:bg-green-100",
+      Upload: "bg-purple-100 text-purple-800 border-purple-200 hover:bg-purple-100",
+    };
 
     return (
-      <Badge variant={variants[type as keyof typeof variants] || "secondary"}>
+      <Badge
+        variant="outline"
+        className={`${styles[type] || "bg-gray-100 text-gray-800 border-gray-200"} border`}
+      >
         {type}
       </Badge>
     );
@@ -255,10 +260,10 @@ const Activity: React.FC = () => {
       <div>
         <h1 className="text-3xl font-bold text-foreground flex items-center gap-2">
           <ActivityIcon className="h-8 w-8" />
-          Activity Log
+          All Certificates
         </h1>
         <p className="text-muted-foreground">
-          Track all SSL certificate operations and their current status
+          View and manage all certificates in the system
         </p>
       </div>
 
@@ -347,14 +352,11 @@ const Activity: React.FC = () => {
               <TableHeader>
                 <TableRow>
                   <TableHead>ID</TableHead>
-                  <TableHead>Type</TableHead>
                   <TableHead>DNS</TableHead>
+                  <TableHead>SAN List</TableHead>
                   <TableHead>App Name</TableHead>
                   <TableHead>Owner</TableHead>
                   <TableHead>CA</TableHead>
-                  <TableHead>Created By</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Status</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -362,7 +364,7 @@ const Activity: React.FC = () => {
                 {filteredAndSortedData.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={9}
+                      colSpan={7} // Adjusted colspan to 7
                       className="text-center py-8 text-muted-foreground"
                     >
                       No activities found matching your criteria
@@ -378,22 +380,26 @@ const Activity: React.FC = () => {
                       <TableCell className="font-mono text-sm">
                         {activity.id}
                       </TableCell>
-                      <TableCell>{getTypeBadge(activity.type)}</TableCell>
                       <TableCell className="font-medium">
                         {activity.dns}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1 max-w-[200px]">
+                          {activity.sanList?.slice(0, 2).map((san: string) => (
+                            <Badge key={san} variant="secondary" className="text-[10px] px-1 h-5">
+                              {san}
+                            </Badge>
+                          ))}
+                          {activity.sanList && activity.sanList.length > 2 && (
+                            <Badge variant="outline" className="text-[10px] px-1 h-5">
+                              +{activity.sanList.length - 2}
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>{activity.appName}</TableCell>
                       <TableCell>{activity.owner}</TableCell>
                       <TableCell>{activity.ca}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="font-mono text-xs">
-                          {activity.createdBy || 'system'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {formatDate(activity.createdAt)}
-                      </TableCell>
-                      <TableCell>{getStatusBadge(activity.status)}</TableCell>
 
                       {/* ACTIONS: Download CSR */}
                       <TableCell>
@@ -421,7 +427,7 @@ const Activity: React.FC = () => {
 
       {/* History Sheet */}
       <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
-        <SheetContent className="w-[400px] sm:w-[540px]">
+        <SheetContent className="w-[300px] sm:w-[400px]">
           <SheetHeader>
             <SheetTitle>Activity History</SheetTitle>
             <SheetDescription>

@@ -9,6 +9,7 @@ import Layout from "@/components/Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Activity from "./pages/Activity";
+import RecentActivity from "./pages/RecentActivity";
 import NewCertificate from "./pages/ssl-agent/NewCertificate";
 import RenewCertificate from "./pages/ssl-agent/RenewCertificate";
 import PfxGenerator from "./pages/ssl-agent/PfxGenerator";
@@ -38,6 +39,13 @@ const App = () => (
               <ProtectedRoute>
                 <Layout>
                   <Activity />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            <Route path="/recent-activity" element={
+              <ProtectedRoute>
+                <Layout>
+                  <RecentActivity />
                 </Layout>
               </ProtectedRoute>
             } />

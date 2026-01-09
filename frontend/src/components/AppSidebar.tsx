@@ -19,12 +19,14 @@ import {
   Package,
   Upload,
   Activity,
-  ListPlus
+  ListPlus,
+  Clock
 } from 'lucide-react';
 
 const navigationItems = [
   { title: 'Dashboard', url: '/', icon: Home },
-  { title: 'Activity', url: '/activity', icon: Activity },
+  { title: 'All Certificates', url: '/activity', icon: Activity },
+  { title: 'Recent Activity', url: '/recent-activity', icon: Clock },
 ];
 
 const sslAgentItems = [
