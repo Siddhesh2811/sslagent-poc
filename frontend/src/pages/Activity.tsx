@@ -29,7 +29,19 @@ import {
   Filter,
   Download,
   Activity as ActivityIcon,
+  Clock,
+  User,
+  Info,
 } from "lucide-react";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 
 type ActivityRow = {
   id: string;
@@ -40,10 +52,20 @@ type ActivityRow = {
   spoc?: string;
   ca: string;
   createdAt: string;
+  createdBy?: string;
   status: string;
   csr_md5?: string;
   key_md5?: string;
   remarks?: string;
+};
+
+type ActivityLog = {
+  id: number;
+  dns: string;
+  action_type: string;
+  performed_by: string;
+  timestamp: string;
+  details: any;
 };
 
 const Activity: React.FC = () => {
@@ -54,6 +76,30 @@ const Activity: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("date");
+
+  // History State
+  const [historyLogs, setHistoryLogs] = useState<ActivityLog[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [selectedCert, setSelectedCert] = useState<string | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
+  const viewHistory = async (dns: string) => {
+    setSelectedCert(dns);
+    setIsHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(
+        `http://localhost:5000/api/certificates/activity/${dns}`
+      );
+      if (!res.ok) throw new Error("Failed to fetch history");
+      const data = await res.json();
+      setHistoryLogs(data);
+    } catch (err) {
+      console.error("Error loading history:", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   useEffect(() => {
     const fetchActivities = async () => {
@@ -306,6 +352,7 @@ const Activity: React.FC = () => {
                   <TableHead>App Name</TableHead>
                   <TableHead>Owner</TableHead>
                   <TableHead>CA</TableHead>
+                  <TableHead>Created By</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Actions</TableHead>
@@ -323,7 +370,11 @@ const Activity: React.FC = () => {
                   </TableRow>
                 ) : (
                   filteredAndSortedData.map((activity) => (
-                    <TableRow key={activity.id} className="hover:bg-muted/50">
+                    <TableRow
+                      key={activity.id}
+                      className="hover:bg-muted/50 cursor-pointer"
+                      onClick={() => viewHistory(activity.dns)}
+                    >
                       <TableCell className="font-mono text-sm">
                         {activity.id}
                       </TableCell>
@@ -334,6 +385,11 @@ const Activity: React.FC = () => {
                       <TableCell>{activity.appName}</TableCell>
                       <TableCell>{activity.owner}</TableCell>
                       <TableCell>{activity.ca}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-mono text-xs">
+                          {activity.createdBy || 'system'}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {formatDate(activity.createdAt)}
                       </TableCell>
@@ -344,11 +400,12 @@ const Activity: React.FC = () => {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() =>
+                          onClick={(e) => {
+                            e.stopPropagation();
                             window.open(
                               `http://localhost:5000/api/certificates/download-zip/${activity.dns}`
-                            )
-                          }
+                            );
+                          }}
                         ><Download className="h-4 w-4 mr-2" />
                           ZIP
                         </Button>
@@ -361,6 +418,70 @@ const Activity: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* History Sheet */}
+      <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+        <SheetContent className="w-[400px] sm:w-[540px]">
+          <SheetHeader>
+            <SheetTitle>Activity History</SheetTitle>
+            <SheetDescription>
+              Timeline for {selectedCert}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="mt-6 h-[calc(100vh-150px)]">
+            {historyLoading ? (
+              <div className="text-center py-8">Loading history...</div>
+            ) : (
+              <ScrollArea className="h-full pr-4">
+                <div className="space-y-8">
+                  {historyLogs.length === 0 ? (
+                    <div className="text-center text-muted-foreground">
+                      No history found for this certificate.
+                    </div>
+                  ) : (
+                    historyLogs.map((log) => (
+                      <div key={log.id} className="relative flex gap-4 pb-4">
+                        {/* Timeline line */}
+                        <div className="absolute left-[19px] top-8 bottom-0 w-px bg-border" />
+
+                        <div className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border bg-background">
+                          <ActivityIcon className="h-5 w-5 text-primary" />
+                        </div>
+
+                        <div className="flex flex-col gap-2 w-full">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold">{log.action_type}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {formatDate(log.timestamp)}
+                            </span>
+                          </div>
+
+                          <div className="rounded-lg border p-3 text-sm bg-muted/30">
+                            <div className="flex items-center gap-2 mb-2">
+                              <User className="h-3 w-3" />
+                              <span className="font-mono text-xs">{log.performed_by}</span>
+                            </div>
+
+                            {log.details && (
+                              <div className="text-xs text-muted-foreground mt-2">
+                                <pre className="whitespace-pre-wrap font-mono bg-background p-2 rounded border">
+                                  {typeof log.details === 'string'
+                                    ? log.details
+                                    : JSON.stringify(log.details, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 };

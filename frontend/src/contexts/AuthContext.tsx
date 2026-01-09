@@ -41,23 +41,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (domainId: string, password: string): Promise<boolean> => {
     setIsLoading(true);
-    
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Simple validation - in real app, this would be API-based
-    if (domainId.trim() && password.trim()) {
-      const userData: User = {
-        domainId,
-        isAuthenticated: true,
-      };
-      
-      setUser(userData);
-      localStorage.setItem('ssl_user', JSON.stringify(userData));
-      setIsLoading(false);
-      return true;
+
+    try {
+      const response = await fetch('http://localhost:5000/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username: domainId, password }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        const userData: User = {
+          domainId: data.user.username,
+          isAuthenticated: true,
+        };
+
+        setUser(userData);
+        localStorage.setItem('ssl_user', JSON.stringify(userData));
+        // You might want to store the token too: localStorage.setItem('ssl_token', data.token);
+        setIsLoading(false);
+        return true;
+      }
+    } catch (error) {
+      console.error("Login Failed:", error);
     }
-    
+
     setIsLoading(false);
     return false;
   };

@@ -1,5 +1,7 @@
 // server.js
 import express from "express";
+import dotenv from "dotenv";
+dotenv.config();
 import cors from "cors";
 import bodyParser from "body-parser";
 import fs from "fs";
@@ -13,10 +15,16 @@ import { initMongo, uploadToGridFS, downloadFromGridFS } from "./gridfs.js";
 import { createCSRZipBuffer } from "./zipUtils.js";
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(bodyParser.json());
+
+// ----------------------------
+// AUTHENTICATION
+// ----------------------------
+import { login } from "./authController.js";
+app.post("/api/auth/login", login);
 
 // ----------------------------
 // MySQL Connection
@@ -36,6 +44,49 @@ const mysqlPool = mysql.createPool({
 await initMongo();
 
 // ----------------------------
+// DB Migration: Add activity_status if not exists
+// ----------------------------
+try {
+  const [cols] = await mysqlPool.execute(
+    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'rilssllab' AND TABLE_NAME = 'CSR' AND COLUMN_NAME = 'activity_status'"
+  );
+  if (cols.length === 0) {
+    console.log("⚠️ Column 'activity_status' missing. Adding it...");
+    await mysqlPool.execute("ALTER TABLE CSR ADD COLUMN activity_status VARCHAR(50) DEFAULT 'Pending'");
+    console.log("✅ Column 'activity_status' added.");
+  }
+
+  // Create ActivityLogs table
+  await mysqlPool.execute(`
+    CREATE TABLE IF NOT EXISTS ActivityLogs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      dns VARCHAR(255) NOT NULL,
+      action_type VARCHAR(50) NOT NULL,
+      performed_by VARCHAR(100) DEFAULT 'system',
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      details JSON
+    )
+  `);
+} catch (err) {
+  console.error("Migration Error:", err);
+}
+
+// ----------------------------
+// Helper: Log Activity
+// ----------------------------
+async function logActivity(dns, actionType, performedBy, details = {}) {
+  try {
+    await mysqlPool.execute(
+      `INSERT INTO ActivityLogs (dns, action_type, performed_by, details, timestamp) VALUES (?, ?, ?, ?, NOW())`,
+      [dns, actionType, performedBy || "system", JSON.stringify(details)]
+    );
+    console.log(`📝 Logged activity: ${actionType} for ${dns}`);
+  } catch (err) {
+    console.error("❌ Failed to log activity:", err);
+  }
+}
+
+// ----------------------------
 const EMPTY_MD5 = "d41d8cd98f00b204e9800998ecf8427e";
 
 // ----------------------------
@@ -53,6 +104,8 @@ app.get("/api/certificates/activity", async (req, res) => {
          date,
          csr_md5,
          key_md5,
+         created_by,
+         activity_status,
          remarks
        FROM CSR
        ORDER BY date DESC
@@ -68,9 +121,10 @@ app.get("/api/certificates/activity", async (req, res) => {
       spoc: item.application_spoc,
       ca: item.certificate_type,
       createdAt: item.date,
-      status: "Completed",
+      status: item.activity_status || "Completed",
       csr_md5: item.csr_md5,
       key_md5: item.key_md5,
+      createdBy: item.created_by,
       remarks: item.remarks,
     }));
 
@@ -78,6 +132,23 @@ app.get("/api/certificates/activity", async (req, res) => {
   } catch (err) {
     console.error("❌ Activity fetch error:", err);
     res.status(500).json({ message: "Failed to fetch activity logs" });
+  }
+});
+
+// ----------------------------
+// Activity History Endpoint
+// ----------------------------
+app.get("/api/certificates/activity/:dns", async (req, res) => {
+  try {
+    const { dns } = req.params;
+    const [rows] = await mysqlPool.execute(
+      `SELECT * FROM ActivityLogs WHERE dns = ? ORDER BY timestamp DESC`,
+      [dns]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ History fetch error:", err);
+    res.status(500).json({ message: "Failed to fetch history" });
   }
 });
 
@@ -186,8 +257,8 @@ app.post("/api/certificates", async (req, res) => {
     const [result] = await mysqlPool.execute(
       `INSERT INTO CSR 
         (application_name, common_name, san, application_owner, application_spoc,
-        certificate_type, date, created_by, csr_md5, key_md5, remarks)
-       VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)`,
+        certificate_type, date, created_by, csr_md5, key_md5, remarks, activity_status)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)`,
       [
         appName,
         dns,
@@ -199,10 +270,16 @@ app.post("/api/certificates", async (req, res) => {
         csr_md5,
         key_md5,
         remarks,
+        "CSR Generated"
       ]
     );
 
     console.log("✅ MySQL Insert:", result);
+
+    // Activity Log
+    await logActivity(dns, "CSR Generated", created_by, {
+      appName, appOwner, ca, san
+    });
 
     // cleanup temp files
     fs.unlinkSync(cnfPath);
@@ -441,8 +518,8 @@ app.post(
       const [result] = await mysqlPool.execute(
         `INSERT INTO CSR 
           (application_name, common_name, san, application_owner, application_spoc,
-          certificate_type, date, created_by, csr_md5, key_md5, remarks)
-         VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)`,
+          certificate_type, date, created_by, csr_md5, key_md5, remarks, activity_status)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)`,
         [
           appName,
           dns,
@@ -454,10 +531,17 @@ app.post(
           csr_md5,
           key_md5,
           remarks || "Imported via Uploader",
+          "Imported"
         ]
       );
 
       console.log("✅ Import Success:", result);
+
+      // Activity Log
+      await logActivity(dns, "Imported", created_by, {
+        remarks: "Imported via Uploader",
+        issuer: certInfo.issuer
+      });
 
       return res.status(201).json({
         message: "Certificate imported successfully",
@@ -561,12 +645,25 @@ app.post(
       // ----------------------------
       // Insert DB record
       // ----------------------------
+      const created_by = req.body.created_by || "system"; // Get from FormData
+
       await mysqlPool.execute(
         `INSERT INTO CRTPFX
          (cert_upload_date, cert_upload_user, crt_md5, csr_md5, key_md5, pfx_generation_status)
          VALUES (NOW(), ?, ?, ?, ?, ?)`,
-        ["system", crt_md5, rows[0].csr_md5, rows[0].key_md5, "PFX Generated"]
+        [created_by, crt_md5, rows[0].csr_md5, rows[0].key_md5, "PFX Generated"]
       );
+
+      // Update CSR table status as well
+      await mysqlPool.execute(
+        `UPDATE CSR SET activity_status = 'PFX Generated' WHERE csr_md5 = ?`,
+        [rows[0].csr_md5]
+      );
+
+      // Activity Log
+      await logActivity(dns, "PFX Generated", created_by, {
+        message: "PFX regenerated from CRT"
+      });
 
       return res.json({
         message: "PFX generated successfully",
@@ -656,10 +753,10 @@ app.post("/api/certificates/analyze", upload.single("existingCrt"), async (req, 
 app.post("/api/certificates/update-san", async (req, res) => {
   let tempKeyPath, tempCnfPath, tempCsrPath;
   try {
-    const { dns, sanList } = req.body;
+    const { dns, sanList, created_by } = req.body;
     if (!dns || !sanList) return res.status(400).json({ message: "DNS and SAN List are required" });
 
-    console.log(`Update SAN for ${dns}:`, sanList, typeof sanList);
+    console.log(`Update SAN for ${dns} by ${created_by || 'unknown'}:`, sanList);
 
     // 1. Download existing ZIP to get the Key
     const filename = `${dns}.zip`;
@@ -698,10 +795,20 @@ app.post("/api/certificates/update-san", async (req, res) => {
     const new_csr_md5 = await getCSRMD5(tempCsrPath);
 
     // Update MySQL
+    // Update MySQL
+    // Be careful with SQL injection on remarks if simpler concatenation used, but params are safe.
+    // We'll append " | updated by: <user>"
+    const updateMsg = ` | SAN Updated by ${created_by || 'system'}`;
+
     await mysqlPool.execute(
-      `UPDATE CSR SET san = ?, csr_md5 = ?, remarks = CONCAT(remarks, ' | SAN Updated') WHERE common_name = ?`,
-      [JSON.stringify(sanList), new_csr_md5, dns]
+      `UPDATE CSR SET san = ?, csr_md5 = ?, remarks = CONCAT(remarks, ?), activity_status = ? WHERE common_name = ?`,
+      [JSON.stringify(sanList), new_csr_md5, updateMsg, "SAN Updated", dns]
     );
+
+    // Activity Log
+    await logActivity(dns, "SAN Updated", created_by, {
+      sanList: sanList
+    });
 
     // 6. Upload New ZIP
     const newZip = new AdmZip();

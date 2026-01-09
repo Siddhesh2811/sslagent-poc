@@ -27,8 +27,11 @@ interface NewCertificateForm {
   remarks: string;
 }
 
+import { useAuth } from "@/contexts/AuthContext";
+
 const NewCertificate: React.FC = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const {
     register,
     handleSubmit,
@@ -41,21 +44,17 @@ const NewCertificate: React.FC = () => {
 
   const san = watch("san") || [];
 
-  // const onSubmit = (data: NewCertificateForm) => {
-  //   // Simulate API call
-  //   console.log('New Certificate Request:', data);
-  //   toast({
-  //     title: "Certificate request submitted",
-  //     description: `Request for ${data.dns} has been submitted successfully.`,
-  //   });
-  // };
-
   const onSubmit = async (data: NewCertificateForm) => {
     try {
+      const payload = {
+        ...data,
+        created_by: user?.domainId || "unknown_user",
+      };
+
       const response = await fetch("http://localhost:5000/api/certificates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
 
       const result = await response.json();

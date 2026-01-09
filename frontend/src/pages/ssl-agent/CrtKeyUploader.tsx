@@ -8,6 +8,8 @@ import { FileUpload } from '@/components/FileUpload';
 import { Upload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
+import { useAuth } from '@/contexts/AuthContext';
+
 interface CrtKeyUploaderForm {
   existingCrt: File | null;
   existingKey: File | null;
@@ -20,6 +22,7 @@ interface CrtKeyUploaderForm {
 
 const CrtKeyUploader: React.FC = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<CrtKeyUploaderForm>({
     defaultValues: {
       existingCrt: null,
@@ -50,6 +53,7 @@ const CrtKeyUploader: React.FC = () => {
       formData.append('appSPOC', data.appSPOC);
       formData.append('remarks', data.remarks);
       formData.append('ca', data.ca);
+      formData.append('created_by', user?.domainId || 'unknown_user');
 
       const response = await fetch('http://localhost:5000/api/certificates/import', {
         method: 'POST',

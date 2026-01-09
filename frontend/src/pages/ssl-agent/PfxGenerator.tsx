@@ -8,6 +8,8 @@ import { FileUpload } from "@/components/FileUpload";
 import { Package } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+import { useAuth } from "@/contexts/AuthContext";
+
 interface PfxGeneratorForm {
   dns: string;
   newCrt: File | null;
@@ -15,6 +17,7 @@ interface PfxGeneratorForm {
 
 const PfxGenerator: React.FC = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const {
     register,
     handleSubmit,
@@ -41,6 +44,7 @@ const PfxGenerator: React.FC = () => {
       const formData = new FormData();
       formData.append("dns", data.dns);
       formData.append("newCrt", data.newCrt);
+      formData.append("created_by", user?.domainId || "unknown_user");
 
       const response = await fetch(
         "http://localhost:5000/api/certificates/pfx",

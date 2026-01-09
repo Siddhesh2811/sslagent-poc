@@ -17,8 +17,11 @@ interface AnalyzeResponse {
     dbRecord: any;
 }
 
+import { useAuth } from '@/contexts/AuthContext';
+
 const SanAddition = () => {
     const { toast } = useToast();
+    const { user } = useAuth();
     const [crtFile, setCrtFile] = useState<File | null>(null);
     const [analyzing, setAnalyzing] = useState(false);
     const [analysisData, setAnalysisData] = useState<AnalyzeResponse | null>(null);
@@ -93,7 +96,8 @@ const SanAddition = () => {
                 },
                 body: JSON.stringify({
                     dns: analysisData.dns,
-                    sanList: sanList
+                    sanList: sanList,
+                    created_by: user?.domainId || 'unknown_user'
                 }),
             });
 
