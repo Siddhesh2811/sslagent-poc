@@ -1,0 +1,8 @@
+[2026-01-10T06:48:52.483Z] [dotenv@17.2.3] injecting env (5) from .env [2m-- tip: 🔐 prevent committing .env to code: https://dotenvx.com/precommit[0m
+[2026-01-10T06:48:52.485Z] [dotenv@17.2.3] injecting env (0) from .env [2m-- tip: 🗂️ backup and recover secrets: https://dotenvx.com/ops[0m
+[2026-01-10T06:48:52.782Z] ✅ MongoDB connected
+[2026-01-10T06:48:52.783Z] ✅ GridFSBucket initialized
+[2026-01-10T06:48:53.458Z] ✅ Server running on http://localhost:5000
+[2026-01-10T06:49:16.827Z] Attempting login for: siddhesh1.wani
+[2026-01-10T06:49:16.827Z] Trying Direct Bind for: siddhesh1.wani@ril.com
+[2026-01-10T06:49:16.957Z] Authentication successful!

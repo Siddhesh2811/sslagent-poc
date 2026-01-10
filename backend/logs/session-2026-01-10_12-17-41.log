@@ -1,0 +1,4 @@
+[2026-01-10T06:47:41.445Z] This is a test log message.
+[2026-01-10T06:47:41.445Z] This is a test error message.
+[2026-01-10T06:47:41.445Z] Formatting check: number 42
+[2026-01-10T06:47:42.453Z] Short delay log.

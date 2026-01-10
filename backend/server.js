@@ -1,4 +1,5 @@
 // server.js
+import "./logger.js"; // Initialize logging first
 import express from "express";
 import dotenv from "dotenv";
 dotenv.config();
